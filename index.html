@@ -94,7 +94,14 @@
   .vipHud p{margin:0; color:#a9b7ff; font-size:13px}
   .vipRow{display:flex; gap:10px; flex-wrap:wrap}
   .vipRow button{min-width:44px}
-  .vipConfirm[disabled]{opacity:.6; cursor:not-allowed}
+
+  /* Rules overlay */
+  .rules{position:fixed; inset:0; display:none; place-items:center; background:#0008; backdrop-filter:blur(3px); z-index:9996}
+  .rulesBox{background:#0f1628; border:1px solid #ffffff22; border-radius:16px; padding:clamp(18px,3vw,26px); max-width:min(92vw,720px); box-shadow:0 10px 30px #0007}
+  .rulesBox h3{margin:0 0 8px 0; font-size:clamp(18px,3vw,22px)}
+  .rulesBox p{margin:0 0 8px 0; color:#a9b7ff}
+  .rulesBox ul{margin:8px 0 0 18px; line-height:1.6}
+  .rulesBox .close{margin-top:12px}
 </style>
 </head>
 <body>
@@ -145,6 +152,24 @@
     </div>
   </div>
 
+  <!-- Rules overlay -->
+  <div id="rules" class="rules" role="dialog" aria-modal="true" aria-labelledby="rulesTitle">
+    <div class="rulesBox">
+      <h3 id="rulesTitle">DRISHYAMM ~ How to Play (VIP ≠ King)</h3>
+      <p id="rulesIntro"></p>
+      <ul>
+        <li><strong>Not standard chess.</strong> All pieces move like normal chess, but there’s no check or checkmate.</li>
+        <li><strong>VIP is the target.</strong> Each player secretly chooses one piece (not the king) as their VIP. Capture the opponent’s secret VIP to win.</li>
+        <li><strong>Kings are ordinary.</strong> The king has no special status. If it’s captured, the game continues.</li>
+        <li><strong>Hidden identities.</strong> You won’t know your opponent’s VIP piece.</li>
+        <li><strong>Show VIP (your turn only).</strong> Use the <em>Show VIP</em> button to view your <em>your</em> VIP on your turn. It auto‑hides when the turn changes.</li>
+        <li><strong>No castling or en passant.</strong> (Promotions turn pawns into queens.)</li>
+        <li><strong>Quick controls.</strong> <em>Undo</em> takes back one move. <em>Reset</em> restarts VIP selection. <em>New Game</em> opens the Home screen.</li>
+      </ul>
+      <button id="rulesClose" class="close">Got it</button>
+    </div>
+  </div>
+
   <main>
     <section class="board-wrap">
       <div id="board" class="board" aria-label="Chess board"></div>
@@ -154,7 +179,7 @@
       <div class="controls">
         <button id="reset">♻️ Reset Position</button>
         <button id="undo">↩️ Undo</button>
-        <button id="glow">✨ Glow VIP</button>
+        <button id="showVip">👁️ Show VIP (Current Turn)</button>
         <button id="sfxToggle">🔊 SFX: On</button>
       </div>
       <div class="status" id="status">Fill names to begin.</div>
@@ -170,8 +195,9 @@
   let board, turn, history, selected=null, legal=[], over=false;
   let vipWhite=null, vipBlack=null; let SFX=true, lastMove=null;
   let playerWhite='White', playerBlack='Black';
-  let glowToggle=false; let firstTurn=false; // no auto glow at start anymore
-  let mode='idle'; // 'selectWhite' | 'selectBlack' | 'play'
+  let revealVipCurrent=false; 
+  let firstTurn=false; 
+  let mode='idle'; 
 
   // Audio
   let AC; try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch{}
@@ -189,7 +215,7 @@
     osc.connect(og); og.connect(AC.destination); noise.start(t); noise.stop(t+dur*.98); osc.start(t+.02); osc.stop(t+dur*.7);
   }
 
-  // Set up initial chess position
+  // Set up initial
   function setupInitialPosition(){
     board = Array.from({length:8}, ()=> Array(8).fill(null));
     const place=(x,y,t,c)=> board[y][x] = {t,c,moved:false, vip:false};
@@ -203,19 +229,19 @@
   function startSelectionFlow(){
     document.getElementById('intro')?.remove();
     setupInitialPosition();
-    history=[]; over=false; selected=null; legal=[]; glowToggle=false; firstTurn=false; turn=WHITE;
+    history=[]; over=false; selected=null; legal=[]; revealVipCurrent=false; firstTurn=false; turn=WHITE;
     vipWhite=null; vipBlack=null;
-    render();
-    buildVipHud(WHITE);
+    render(); buildVipHud(WHITE);
     mode='selectWhite';
     setStatus(`Choose ${playerWhite}'s VIP (White). Hidden after confirm.`);
+    openRules(`${playerWhite} vs ${playerBlack}`); 
   }
 
   function startGameAfterSelection(){
     mode='play';
     history=[]; over=false; selected=null; legal=[]; turn=WHITE; lastMove=null;
-    // keep VIPs secret at start; only manual ✨ Glow VIP will show them
-    glowToggle=false; firstTurn=false;
+    // keep VIPs secret 
+    revealVipCurrent=false; firstTurn=false;
     render(); updateStatus();
   }
 
@@ -249,13 +275,12 @@
         if(y===0){ const f=document.createElement('div'); f.className='coord file'; f.textContent=String.fromCharCode(97+x).toUpperCase(); sq.appendChild(f);} 
         if(p){
           const tok=document.createElement('div'); tok.className='piece '+(p.c===WHITE?'w':'b'); tok.innerHTML=pieceSVG(p.t); sq.appendChild(tok);
-          // Only show halos during selection for the CURRENT chooser.
-          // In play mode, halos are hidden unless user taps ✨ Glow VIP.
+          // VIP halo visibility
           let haloVisible=false;
           if(p.vip){
             if(mode==='selectWhite') haloVisible = (p.c===WHITE);
             else if(mode==='selectBlack') haloVisible = (p.c===BLACK);
-            else if(mode==='play') haloVisible = glowToggle || firstTurn; // firstTurn=false by default now
+            else if(mode==='play') haloVisible = (revealVipCurrent && p.c===turn) || firstTurn; 
           }
           if(haloVisible){
             const halo=document.createElement('div'); halo.className='vipHalo'; sq.appendChild(halo);
@@ -266,7 +291,7 @@
     }
   }
 
-  // Move gen (play mode)
+  // (play mode)
   function slide(x,y,dirs,out,color){
     for(const [dx,dy] of dirs){
       let tx=x+dx, ty=y+dy;
@@ -316,7 +341,7 @@
     }
   }
 
-  // Clicks
+  // Click
   boardEl.addEventListener('click', (e)=>{
     pingAudio();
     const cell=e.target.closest('.sq'); if(!cell) return;
@@ -325,7 +350,7 @@
     if(mode==='selectWhite' || mode==='selectBlack'){
       const color = (mode==='selectWhite')? WHITE : BLACK;
       if(p && p.c===color && p.t!=='k'){
-        // clear any previous VIP for this color
+        
         for(let ry=0; ry<8; ry++) for(let rx=0; rx<8; rx++){ const q=board[ry][rx]; if(q&&q.c===color) q.vip=false; }
         p.vip=true; render(); updateHudButtons(true);
         if(color===WHITE) vipWhite={x,y}; else vipBlack={x,y};
@@ -359,6 +384,7 @@
         showWinner(`${winner} won!`); fart(false); render(); highlightLegal(); return;
       }
       turn = (turn===WHITE)? BLACK: WHITE;
+      revealVipCurrent=false; 
       render(); highlightLegal(); updateStatus();
     }, 8);
   }
@@ -384,7 +410,7 @@
     setTimeout(()=>ghost.remove(),220);
   }
 
-  // HUD for VIP selection
+  // VIP selection
   function buildVipHud(color){
     destroyVipHud();
     const hud=document.createElement('div'); hud.className='vipHud'; hud.id='vipHud';
@@ -401,14 +427,14 @@
     document.getElementById('vipRandom').onclick = ()=>{ pickRandomVip(color); updateHudButtons(true); fart(true); };
     document.getElementById('vipConfirm').onclick = ()=>{
       const has = hasVip(color); if(!has) return;
-      // On confirm: immediately hide this color's glow by switching mode.
+      // color's glow by switching mode.
       if(color===WHITE){
-        vipWhite=findVip(color); mode='selectBlack'; render(); // hides white halo
+        vipWhite=findVip(color); mode='selectBlack'; render(); 
         buildVipHud(BLACK);
         setStatus(`Choose ${playerBlack}'s VIP (Black). Hidden after confirm.`);
       }else{
         vipBlack=findVip(color); destroyVipHud();
-        startGameAfterSelection(); // both hidden at game start
+        startGameAfterSelection(); 
       }
     };
   }
@@ -438,7 +464,7 @@
   btn('reset').onclick = ()=>{ startSelectionFlow(); };
   btn('undo').onclick = ()=>{ if(mode!=='play') return; const last=history?.pop?.(); if(!last) return;
     board=last.board; turn=last.turn; lastMove=last.lastMove||null; selected=null; legal=[]; render(); updateStatus(); };
-  btn('glow').onclick = ()=>{ glowToggle=!glowToggle; render(); };
+  btn('showVip').onclick = ()=>{ if(mode!=='play') return; revealVipCurrent=!revealVipCurrent; render(); };
   btn('sfxToggle').onclick = ()=>{ SFX=!SFX; btn('sfxToggle').textContent=`🔊 SFX: ${SFX?'On':'Off'}`; pingAudio(); };
 
   // Intro form
@@ -484,6 +510,13 @@
   function setStatus(s){ document.getElementById('status').textContent=s; document.getElementById('turnInfo').textContent=s; }
   function updateStatus(){ setStatus(`${turn===WHITE? playerWhite: playerBlack} (${turn===WHITE?'White':'Black'}) to move — capture the hidden VIP to win`); }
 
+  // Rules overlay 
+  function openRules(vsText){
+    const r=document.getElementById('rules');
+    document.getElementById('rulesIntro').textContent = `Match: ${playerWhite} (White) vs ${playerBlack} (Black).`;
+    r.style.display='grid';
+    document.getElementById('rulesClose').onclick=()=>{ r.style.display='none'; };
+  }
 })();
 </script>
 </body>
