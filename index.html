@@ -97,11 +97,18 @@
 
   /* Rules overlay */
   .rules{position:fixed; inset:0; display:none; place-items:center; background:#0008; backdrop-filter:blur(3px); z-index:9996}
-  .rulesBox{background:#0f1628; border:1px solid #ffffff22; border-radius:16px; padding:clamp(18px,3vw,26px); max-width:min(92vw,720px); box-shadow:0 10px 30px #0007}
+  .rulesBox{position:relative; background:#0f1628; border:1px solid #ffffff22; border-radius:16px; padding:clamp(18px,3vw,26px); max-width:min(92vw,720px); box-shadow:0 10px 30px #0007}
   .rulesBox h3{margin:0 0 8px 0; font-size:clamp(18px,3vw,22px)}
   .rulesBox p{margin:0 0 8px 0; color:#a9b7ff}
   .rulesBox ul{margin:8px 0 0 18px; line-height:1.6}
   .rulesBox .close{margin-top:12px}
+  /* NEW: top-right X button */
+  .rulesCloseX{
+    position:absolute; right:10px; top:10px;
+    border:1px solid #ffffff22; background:#17224b; color:#fff;
+    border-radius:10px; padding:8px 10px; cursor:pointer; min-height:auto; min-width:auto;
+  }
+  .rulesCloseX:hover{filter:brightness(1.1)}
 </style>
 </head>
 <body>
@@ -155,6 +162,9 @@
   <!-- Rules overlay -->
   <div id="rules" class="rules" role="dialog" aria-modal="true" aria-labelledby="rulesTitle">
     <div class="rulesBox">
+      <!-- NEW: X close -->
+      <button id="rulesCloseX" class="rulesCloseX" aria-label="Close">✕</button>
+
       <h3 id="rulesTitle">DRISHYAMM ~ How to Play (VIP ≠ King)</h3>
       <p id="rulesIntro"></p>
       <ul>
@@ -162,7 +172,7 @@
         <li><strong>VIP is the target.</strong> Each player secretly chooses one piece (not the king) as their VIP. Capture the opponent’s secret VIP to win.</li>
         <li><strong>Kings are ordinary.</strong> The king has no special status. If it’s captured, the game continues.</li>
         <li><strong>Hidden identities.</strong> You won’t know your opponent’s VIP piece.</li>
-        <li><strong>Show VIP (your turn only).</strong> Use the <em>Show VIP</em> button to view your <em>your</em> VIP on your turn. It auto‑hides when the turn changes.</li>
+        <li><strong>Show VIP (your turn only).</strong> Use the <em>Show VIP</em> button to view your VIP on your turn. It auto-hides when the turn changes.</li>
         <li><strong>No castling or en passant.</strong> (Promotions turn pawns into queens.)</li>
         <li><strong>Quick controls.</strong> <em>Undo</em> takes back one move. <em>Reset</em> restarts VIP selection. <em>New Game</em> opens the Home screen.</li>
       </ul>
@@ -195,9 +205,9 @@
   let board, turn, history, selected=null, legal=[], over=false;
   let vipWhite=null, vipBlack=null; let SFX=true, lastMove=null;
   let playerWhite='White', playerBlack='Black';
-  let revealVipCurrent=false; 
-  let firstTurn=false; 
-  let mode='idle'; 
+  let revealVipCurrent=false;
+  let firstTurn=false;
+  let mode='idle'; // 'selectWhite' | 'selectBlack' | 'play'
 
   // Audio
   let AC; try{ AC = new (window.AudioContext||window.webkitAudioContext)(); }catch{}
@@ -215,7 +225,6 @@
     osc.connect(og); og.connect(AC.destination); noise.start(t); noise.stop(t+dur*.98); osc.start(t+.02); osc.stop(t+dur*.7);
   }
 
-  // Set up initial
   function setupInitialPosition(){
     board = Array.from({length:8}, ()=> Array(8).fill(null));
     const place=(x,y,t,c)=> board[y][x] = {t,c,moved:false, vip:false};
@@ -231,16 +240,15 @@
     setupInitialPosition();
     history=[]; over=false; selected=null; legal=[]; revealVipCurrent=false; firstTurn=false; turn=WHITE;
     vipWhite=null; vipBlack=null;
-    render(); buildVipHud(WHITE);
-    mode='selectWhite';
-    setStatus(`Choose ${playerWhite}'s VIP (White). Hidden after confirm.`);
-    openRules(`${playerWhite} vs ${playerBlack}`); 
+    render();
+    mode='selectWhite'; // NOTE: we DO NOT show VIP HUD yet; it will show after rules close
+    setStatus(`Choose ${playerWhite}'s VIP (after reading rules).`);
+    openRules(`${playerWhite} vs ${playerBlack}`);
   }
 
   function startGameAfterSelection(){
     mode='play';
     history=[]; over=false; selected=null; legal=[]; turn=WHITE; lastMove=null;
-    // keep VIPs secret 
     revealVipCurrent=false; firstTurn=false;
     render(); updateStatus();
   }
@@ -275,12 +283,11 @@
         if(y===0){ const f=document.createElement('div'); f.className='coord file'; f.textContent=String.fromCharCode(97+x).toUpperCase(); sq.appendChild(f);} 
         if(p){
           const tok=document.createElement('div'); tok.className='piece '+(p.c===WHITE?'w':'b'); tok.innerHTML=pieceSVG(p.t); sq.appendChild(tok);
-          // VIP halo visibility
           let haloVisible=false;
           if(p.vip){
             if(mode==='selectWhite') haloVisible = (p.c===WHITE);
             else if(mode==='selectBlack') haloVisible = (p.c===BLACK);
-            else if(mode==='play') haloVisible = (revealVipCurrent && p.c===turn) || firstTurn; 
+            else if(mode==='play') haloVisible = (revealVipCurrent && p.c===turn) || firstTurn;
           }
           if(haloVisible){
             const halo=document.createElement('div'); halo.className='vipHalo'; sq.appendChild(halo);
@@ -291,7 +298,6 @@
     }
   }
 
-  // (play mode)
   function slide(x,y,dirs,out,color){
     for(const [dx,dy] of dirs){
       let tx=x+dx, ty=y+dy;
@@ -341,7 +347,6 @@
     }
   }
 
-  // Click
   boardEl.addEventListener('click', (e)=>{
     pingAudio();
     const cell=e.target.closest('.sq'); if(!cell) return;
@@ -350,7 +355,6 @@
     if(mode==='selectWhite' || mode==='selectBlack'){
       const color = (mode==='selectWhite')? WHITE : BLACK;
       if(p && p.c===color && p.t!=='k'){
-        
         for(let ry=0; ry<8; ry++) for(let rx=0; rx<8; rx++){ const q=board[ry][rx]; if(q&&q.c===color) q.vip=false; }
         p.vip=true; render(); updateHudButtons(true);
         if(color===WHITE) vipWhite={x,y}; else vipBlack={x,y};
@@ -384,7 +388,7 @@
         showWinner(`${winner} won!`); fart(false); render(); highlightLegal(); return;
       }
       turn = (turn===WHITE)? BLACK: WHITE;
-      revealVipCurrent=false; 
+      revealVipCurrent=false;
       render(); highlightLegal(); updateStatus();
     }, 8);
   }
@@ -410,7 +414,7 @@
     setTimeout(()=>ghost.remove(),220);
   }
 
-  // VIP selection
+  // VIP HUD
   function buildVipHud(color){
     destroyVipHud();
     const hud=document.createElement('div'); hud.className='vipHud'; hud.id='vipHud';
@@ -427,14 +431,15 @@
     document.getElementById('vipRandom').onclick = ()=>{ pickRandomVip(color); updateHudButtons(true); fart(true); };
     document.getElementById('vipConfirm').onclick = ()=>{
       const has = hasVip(color); if(!has) return;
-      // color's glow by switching mode.
       if(color===WHITE){
-        vipWhite=findVip(color); mode='selectBlack'; render(); 
+        vipWhite=findVip(color); mode='selectBlack'; render(); // hide White glow immediately
+        destroyVipHud();
+        // Show Black HUD now
         buildVipHud(BLACK);
         setStatus(`Choose ${playerBlack}'s VIP (Black). Hidden after confirm.`);
       }else{
         vipBlack=findVip(color); destroyVipHud();
-        startGameAfterSelection(); 
+        startGameAfterSelection(); // both chosen → start
       }
     };
   }
@@ -510,12 +515,20 @@
   function setStatus(s){ document.getElementById('status').textContent=s; document.getElementById('turnInfo').textContent=s; }
   function updateStatus(){ setStatus(`${turn===WHITE? playerWhite: playerBlack} (${turn===WHITE?'White':'Black'}) to move — capture the hidden VIP to win`); }
 
-  // Rules overlay 
-  function openRules(vsText){
+  // Rules overlay helpers
+  function openRules(){
     const r=document.getElementById('rules');
     document.getElementById('rulesIntro').textContent = `Match: ${playerWhite} (White) vs ${playerBlack} (Black).`;
     r.style.display='grid';
-    document.getElementById('rulesClose').onclick=()=>{ r.style.display='none'; };
+
+    const closeAll = ()=>{
+      r.style.display='none';
+      
+      if(mode==='selectWhite'){ buildVipHud(WHITE); setStatus(`Choose ${playerWhite}'s VIP (White). Hidden after confirm.`); }
+    };
+
+    document.getElementById('rulesClose').onclick = closeAll;
+    document.getElementById('rulesCloseX').onclick = closeAll;
   }
 })();
 </script>
